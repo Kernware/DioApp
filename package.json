@@ -1,0 +1,40 @@
+{
+  "name": "dio-payments",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "prebuild": "expo prebuild",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-navigation/native": "^7.3.14",
+    "@react-navigation/native-stack": "^7.18.6",
+    "@stripe/stripe-react-native": "^0.73.0",
+    "@stripe/stripe-terminal-react-native": "^0.0.1-beta.32",
+    "expo": "~57.0.0",
+    "expo-build-properties": "~57.0.8",
+    "expo-crypto": "~57.0.1",
+    "expo-network": "~57.0.1",
+    "expo-print": "~57.0.1",
+    "expo-secure-store": "~57.0.1",
+    "expo-sharing": "~57.0.8",
+    "expo-sqlite": "~57.0.1",
+    "expo-status-bar": "~3.0.0",
+    "react": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-qrcode-svg": "^6.3.21",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-svg": "^15.15.5"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "babel-preset-expo": "^57.0.5",
+    "typescript": "~5.9.0"
+  }
+}
