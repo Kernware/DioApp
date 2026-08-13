@@ -1,0 +1,96 @@
+# syntax=docker/dockerfile:1.7
+#
+# Builds the Android release APK for DIO Payments in a clean container, so nobody
+# needs Android Studio/the SDK/NDK installed locally. Mirrors `make build_apk`
+# (see Makefile): prebuild the native project, then `gradlew assembleRelease`.
+#
+# Requires BuildKit (the default builder on modern Docker/Docker Desktop) for the
+# --mount=type=secret and --output flags used below.
+#
+# Usage:
+#   docker build -f Dockerfile.android \
+#     --secret id=env_file,src=.env \
+#     --output type=local,dest=./dist .
+#
+#   The APK lands at ./dist/app-release.apk
+#
+#   Omitting --secret builds with empty Stripe/bank values, same as running
+#   `make build_apk` without a .env file present.
+#
+# The Android cmdline-tools version is pinned to what was current when this file
+# was written. If the download 404s, grab the current version number from
+# https://developer.android.com/studio#command-line-tools-only and update
+# CMDLINE_TOOLS_VERSION below.
+#
+# Give the Docker daemon at least 6-8GB of memory — Gradle/Kotlin/D8 are hungry
+# and will OOM in a default-sized Docker Desktop VM.
+#
+# Pinned to linux/amd64: the Android SDK's bundled cmake/NDK toolchains are
+# x86_64-only, so on Apple Silicon (or any arm64 host) this stage runs under
+# emulation. The output APK still contains all target ABIs (including
+# arm64-v8a) since NDK cross-compiles regardless of the host/build arch.
+
+FROM --platform=linux/amd64 eclipse-temurin:17-jdk-jammy AS builder
+
+ARG CMDLINE_TOOLS_VERSION=15859902
+ARG NODE_MAJOR=22
+
+ENV ANDROID_SDK_ROOT=/opt/android-sdk \
+    ANDROID_HOME=/opt/android-sdk \
+    DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl \
+      unzip \
+      ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js — react-native 0.86 requires ^20.19.4 || ^22.13.0 || ^24.3.0 || >=25.0.0
+RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Android command-line tools, then the exact SDK/build-tools/NDK/CMake versions
+# this project's react-native/expo-modules-autolinking pin
+# (node_modules/react-native/gradle/libs.versions.toml: compileSdk/targetSdk 36,
+# buildTools 36.0.0, ndkVersion 27.1.12297006).
+RUN mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && curl -fsSL -o /tmp/cmdline-tools.zip \
+      "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip" \
+    && unzip -q /tmp/cmdline-tools.zip -d "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && mv "${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools" "${ANDROID_SDK_ROOT}/cmdline-tools/latest" \
+    && rm /tmp/cmdline-tools.zip
+
+ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${PATH}"
+
+RUN yes | sdkmanager --licenses > /dev/null \
+    && sdkmanager --install \
+      "platform-tools" \
+      "platforms;android-36" \
+      "build-tools;36.0.0" \
+      "ndk;27.1.12297006" \
+      "cmake;3.22.1" > /dev/null
+
+WORKDIR /app
+
+# JS deps first so this layer caches across source-only changes.
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# App source. android/ and ios/ are intentionally not copied — they're gitignored
+# generated output; `expo prebuild` regenerates android/ fresh below, same as the
+# Makefile does locally.
+COPY app.config.js babel.config.js tsconfig.json App.tsx ./
+COPY src ./src
+
+# .env is mounted only for this RUN step (BuildKit secret — never written to an
+# image layer) because both app.config.js's process.env reads and the
+# EXPO_PUBLIC_* inlining happen at prebuild/bundle time. Building without a
+# secret still works, matching `make build_apk`'s no-.env fallback.
+RUN --mount=type=secret,id=env_file,target=/app/.env \
+    (test -f /app/.env || echo "warning: no .env secret provided, building with empty Stripe and bank values") && \
+    npx expo prebuild --platform android && \
+    cd android && ./gradlew assembleRelease --no-daemon
+
+FROM scratch AS export
+COPY --from=builder /app/android/app/build/outputs/apk/release/app-release.apk /app-release.apk
